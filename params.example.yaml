@@ -1,0 +1,26 @@
+# Copy this file to params.yaml and edit the values below.
+# params.yaml is gitignored — it holds your server's actual configuration.
+
+# Server / Minecraft
+server_type: Fabric          # Forge | Fabric | Paper
+minecraft_version: "1.20.1"
+seed: ""                     # blank = random world seed
+motd: "My hobby server"
+difficulty: normal            # peaceful | easy | normal | hard
+max_players: 5
+java_memory_mb: 3072
+whitelist_enabled: false      # if true, put overlay/whitelist.json in place
+
+# AWS / infrastructure
+stack_name: craftainer
+instance_type: t3.medium
+key_name: ""                  # EC2 key pair name for SSH access, blank = no SSH key
+ssh_cidr: "0.0.0.0/0"         # CIDR allowed to SSH in (only used if key_name is set)
+
+# Optional — all blank/default unless you need them (e.g. from the GUI's AWS/Network screen)
+region: ""                    # blank = use the AWS CLI's configured default region
+aws_profile: ""                # blank = use the AWS CLI's default profile
+vpc_id: ""                    # blank = account's default VPC
+subnet_id: ""                 # blank = default VPC's default subnet
+allocate_eip: false            # true = static Elastic IP instead of the instance's auto-assigned public IP
+root_volume_size_gb: 8         # bump this up for large modpacks/worlds

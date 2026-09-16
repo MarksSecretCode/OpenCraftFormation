@@ -1,0 +1,32 @@
+# User config and content — the repo stays a clean, reusable template
+params.yaml
+overlay/*
+!overlay/mods
+!overlay/plugins
+!overlay/config
+!overlay/world
+!overlay/.gitkeep
+overlay/mods/*
+!overlay/mods/.gitkeep
+overlay/plugins/*
+!overlay/plugins/.gitkeep
+overlay/config/*
+!overlay/config/.gitkeep
+overlay/world/*
+!overlay/world/.gitkeep
+
+# Build artifacts
+build/
+gui/build/
+gui/dist/
+gui/.venv*/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/

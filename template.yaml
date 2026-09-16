@@ -1,0 +1,278 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Craftainer — a single modded Minecraft server (Forge/Fabric/Paper) on one
+  EC2 instance, configured from an overlay zip pulled from S3.
+
+Parameters:
+  ServerType:
+    Type: String
+    AllowedValues: [Forge, Fabric, Paper]
+    Description: Which server implementation to install.
+
+  MinecraftVersion:
+    Type: String
+    Description: Minecraft version string, e.g. 1.20.1
+
+  Seed:
+    Type: String
+    Default: ""
+    Description: World seed. Leave blank for a random world.
+
+  Motd:
+    Type: String
+    Default: "A Craftainer server"
+
+  Difficulty:
+    Type: String
+    Default: normal
+    AllowedValues: [peaceful, easy, normal, hard]
+
+  MaxPlayers:
+    Type: Number
+    Default: 10
+
+  JavaMemoryMb:
+    Type: Number
+    Default: 3072
+    Description: Heap size (MB) passed to the JVM as -Xmx/-Xms.
+
+  WhitelistEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+
+  OverlayBucket:
+    Type: String
+    Description: S3 bucket holding the overlay zip.
+
+  OverlayKey:
+    Type: String
+    Description: S3 key of the overlay zip (content-hashed by deploy.sh).
+
+  InstanceType:
+    Type: String
+    Default: t3.medium
+
+  KeyName:
+    Type: String
+    Default: ""
+    Description: Optional EC2 key pair name for SSH access. Leave blank to disable SSH.
+
+  SshCidr:
+    Type: String
+    Default: "0.0.0.0/0"
+    Description: CIDR allowed to reach port 22 (only relevant if KeyName is set).
+
+  VpcId:
+    Type: String
+    Default: ""
+    Description: Optional VPC ID to launch into. Leave blank to use the account's default VPC.
+
+  SubnetId:
+    Type: String
+    Default: ""
+    Description: Optional subnet ID to launch into. Leave blank to use the default VPC's default subnet.
+
+  AllocateEip:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Allocate a static Elastic IP instead of using the instance's auto-assigned public IP.
+
+  RootVolumeSizeGb:
+    Type: Number
+    Default: 8
+    MinValue: 8
+    Description: Root EBS volume size in GB. Increase for large modpacks/worlds.
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
+  HasVpcId: !Not [!Equals [!Ref VpcId, ""]]
+  HasSubnetId: !Not [!Equals [!Ref SubnetId, ""]]
+  ShouldAllocateEip: !Equals [!Ref AllocateEip, "true"]
+
+Resources:
+  ServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Craftainer Minecraft server
+      VpcId: !If [HasVpcId, !Ref VpcId, !Ref "AWS::NoValue"]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 25565
+          ToPort: 25565
+          CidrIp: 0.0.0.0/0
+          Description: Minecraft
+        - !If
+          - HasKeyName
+          - IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            CidrIp: !Ref SshCidr
+            Description: SSH
+          - !Ref AWS::NoValue
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  ServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: OverlayReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:aws:s3:::${OverlayBucket}/${OverlayKey}"
+
+  ServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ServerRole
+
+  ServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref ServerInstanceProfile
+      SecurityGroupIds:
+        - !Ref ServerSecurityGroup
+      SubnetId: !If [HasSubnetId, !Ref SubnetId, !Ref "AWS::NoValue"]
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref RootVolumeSizeGb
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-craftainer"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          exec > >(tee /var/log/craftainer-userdata.log) 2>&1
+
+          # AL2023 AMIs ship with AWS CLI v2 preinstalled.
+          dnf install -y java-21-amazon-corretto-headless jq unzip
+
+          SERVER_DIR=/opt/minecraft/server
+          mkdir -p "$SERVER_DIR"
+          cd "$SERVER_DIR"
+
+          useradd -r -m -d /opt/minecraft -s /sbin/nologin minecraft || true
+
+          SERVER_TYPE="${ServerType}"
+          MC_VERSION="${MinecraftVersion}"
+          START_CMD=""
+
+          case "$SERVER_TYPE" in
+            Fabric)
+              LOADER_VERSION=$(curl -sf "https://meta.fabricmc.net/v2/versions/loader/${!MC_VERSION}" | jq -r '.[0].loader.version')
+              INSTALLER_VERSION=$(curl -sf "https://meta.fabricmc.net/v2/versions/installer" | jq -r '.[0].version')
+              curl -sfL -o server.jar "https://meta.fabricmc.net/v2/versions/loader/${!MC_VERSION}/${!LOADER_VERSION}/${!INSTALLER_VERSION}/server/jar"
+              START_CMD="java -Xmx${JavaMemoryMb}M -Xms${JavaMemoryMb}M -jar server.jar nogui"
+              ;;
+
+            Paper)
+              BUILD=$(curl -sf "https://api.papermc.io/v2/projects/paper/versions/${!MC_VERSION}" | jq -r '.builds[-1]')
+              JAR_NAME=$(curl -sf "https://api.papermc.io/v2/projects/paper/versions/${!MC_VERSION}/builds/${!BUILD}" | jq -r '.downloads.application.name')
+              curl -sfL -o server.jar "https://api.papermc.io/v2/projects/paper/versions/${!MC_VERSION}/builds/${!BUILD}/downloads/${!JAR_NAME}"
+              START_CMD="java -Xmx${JavaMemoryMb}M -Xms${JavaMemoryMb}M -jar server.jar nogui"
+              ;;
+
+            Forge)
+              FORGE_VERSION=$(curl -sf https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json \
+                | jq -r --arg v "$MC_VERSION" '.promos[$v + "-recommended"] // .promos[$v + "-latest"]')
+              curl -sfL -o forge-installer.jar \
+                "https://maven.minecraftforge.net/net/minecraftforge/forge/${!MC_VERSION}-${!FORGE_VERSION}/forge-${!MC_VERSION}-${!FORGE_VERSION}-installer.jar"
+              java -jar forge-installer.jar --installServer
+              rm -f forge-installer.jar forge-installer.jar.log
+
+              if [ -f run.sh ]; then
+                # Modern Forge (1.17+): generated launch script + args files.
+                echo "-Xmx${JavaMemoryMb}M -Xms${JavaMemoryMb}M" > user_jvm_args.txt
+                chmod +x run.sh
+                START_CMD="bash run.sh nogui"
+              else
+                # Legacy Forge: single universal/server jar.
+                FORGE_JAR=$(ls forge-*-universal.jar forge-*.jar 2>/dev/null | grep -v installer | head -1)
+                START_CMD="java -Xmx${JavaMemoryMb}M -Xms${JavaMemoryMb}M -jar ${!FORGE_JAR} nogui"
+              fi
+              ;;
+          esac
+
+          echo "eula=true" > eula.txt
+
+          aws s3 cp "s3://${OverlayBucket}/${OverlayKey}" /tmp/overlay.zip
+          unzip -o /tmp/overlay.zip -d "$SERVER_DIR"
+          rm -f /tmp/overlay.zip
+
+          touch server.properties
+          set_prop() {
+            if grep -q "^$1=" server.properties; then
+              sed -i "s|^$1=.*|$1=$2|" server.properties
+            else
+              echo "$1=$2" >> server.properties
+            fi
+          }
+          set_prop level-seed "${Seed}"
+          set_prop motd "${Motd}"
+          set_prop difficulty "${Difficulty}"
+          set_prop max-players "${MaxPlayers}"
+          set_prop white-list "${WhitelistEnabled}"
+          set_prop server-port 25565
+
+          echo "$START_CMD" > start.sh
+          chmod +x start.sh
+          chown -R minecraft:minecraft "$SERVER_DIR"
+
+          cat > /etc/systemd/system/craftainer.service <<EOF
+          [Unit]
+          Description=Craftainer Minecraft server
+          After=network.target
+
+          [Service]
+          User=minecraft
+          WorkingDirectory=$SERVER_DIR
+          ExecStart=/bin/bash $SERVER_DIR/start.sh
+          Restart=on-failure
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          systemctl daemon-reload
+          systemctl enable --now craftainer.service
+
+  ServerEIP:
+    Type: AWS::EC2::EIP
+    Condition: ShouldAllocateEip
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref ServerInstance
+
+Outputs:
+  ServerIP:
+    Description: >-
+      Public IP address of the Minecraft server (port 25565). Static if
+      AllocateEip is true; otherwise changes if the instance is replaced.
+    Value: !If [ShouldAllocateEip, !Ref ServerEIP, !GetAtt ServerInstance.PublicIp]
+  StackName:
+    Value: !Ref "AWS::StackName"

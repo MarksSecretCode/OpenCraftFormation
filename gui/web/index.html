@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OpenCraftFormation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>OpenCraftFormation</h1>
+    <ol class="steps" id="steps">
+      <li data-step="1" class="active">1. Configure</li>
+      <li data-step="2">2. Mods &amp; Files</li>
+      <li data-step="3">3. Export</li>
+    </ol>
+  </header>
+
+  <main id="app">
+
+    <!-- ============ Screen 1: Server Configuration ============ -->
+    <section class="screen" id="screen-1">
+      <div class="grid">
+
+        <fieldset>
+          <legend>Server</legend>
+          <label>Server type
+            <select id="f-server_type">
+              <option value="Fabric">Fabric</option>
+              <option value="Forge">Forge</option>
+              <option value="Paper">Paper</option>
+            </select>
+          </label>
+          <label>Minecraft version
+            <input id="f-minecraft_version" type="text" placeholder="1.20.1">
+            <span class="err" id="err-minecraft_version"></span>
+          </label>
+          <label>Seed <span class="hint">(optional)</span>
+            <input id="f-seed" type="text" placeholder="blank = random">
+          </label>
+          <label>Difficulty
+            <select id="f-difficulty">
+              <option value="peaceful">Peaceful</option>
+              <option value="easy">Easy</option>
+              <option value="normal" selected>Normal</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+          <label>Max players
+            <input id="f-max_players" type="number" min="1" step="1">
+            <span class="err" id="err-max_players"></span>
+          </label>
+          <label>MOTD
+            <input id="f-motd" type="text">
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Resources</legend>
+          <label>Instance type
+            <select id="f-instance_type"></select>
+          </label>
+          <label>Root volume size (GB)
+            <input id="f-root_volume_size_gb" type="number" min="8" step="1">
+            <span class="err" id="err-root_volume_size_gb"></span>
+          </label>
+          <label>Java memory (MB)
+            <input id="f-java_memory_mb" type="number" min="512" step="256">
+            <span class="hint" id="mem-suggest"></span>
+            <span class="err" id="err-java_memory_mb"></span>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Network</legend>
+          <label>SSH CIDR
+            <div class="row">
+              <input id="f-ssh_cidr" type="text" placeholder="0.0.0.0/0">
+              <button type="button" id="btn-autofill-ip">Autofill my IP</button>
+            </div>
+            <span class="err" id="err-ssh_cidr"></span>
+          </label>
+          <label class="checkbox">
+            <input id="f-allocate_eip" type="checkbox">
+            Allocate a static Elastic IP
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>AWS</legend>
+          <p class="hint">
+            These are written into params.yaml as-is — the GUI doesn't
+            connect to AWS, so they aren't validated against your account
+            until you run deploy.sh.
+          </p>
+          <label>Stack name
+            <input id="f-stack_name" type="text">
+            <span class="err" id="err-stack_name"></span>
+          </label>
+          <label>Profile <span class="hint">(optional)</span>
+            <input id="f-aws_profile" type="text" placeholder="default">
+          </label>
+          <label>Region <span class="hint">(optional)</span>
+            <input id="f-region" type="text" placeholder="e.g. us-east-1" list="region-list">
+            <datalist id="region-list"></datalist>
+          </label>
+          <label>Key pair <span class="hint">(optional, for SSH)</span>
+            <input id="f-key_name" type="text" placeholder="(none — no SSH access)">
+          </label>
+          <label>VPC ID <span class="hint">(optional)</span>
+            <input id="f-vpc_id" type="text" placeholder="(default VPC)">
+          </label>
+          <label>Subnet ID <span class="hint">(optional)</span>
+            <input id="f-subnet_id" type="text" placeholder="(default subnet)">
+          </label>
+        </fieldset>
+
+      </div>
+
+      <div class="nav">
+        <span class="spacer"></span>
+        <button type="button" class="primary" id="btn-1-next">Next: Mods &amp; Files</button>
+      </div>
+    </section>
+
+    <!-- ============ Screen 2: Mods & Files ============ -->
+    <section class="screen" id="screen-2" hidden>
+      <h2 id="mods-heading">Mods</h2>
+
+      <div id="dropzone" class="dropzone">
+        <p>Drop <strong>.jar</strong> files here</p>
+        <p class="hint">or</p>
+        <button type="button" id="btn-browse-mods">Browse files…</button>
+        <button type="button" id="btn-open-mods-folder">Open mods folder</button>
+      </div>
+      <p class="hint" id="dnd-hint" hidden>
+        Drag-and-drop file paths aren't available in this environment — use
+        "Browse files…" or "Open mods folder" instead.
+      </p>
+
+      <ul id="mods-list" class="file-list"></ul>
+
+      <details class="subsection">
+        <summary>World <span class="hint">(optional — a pre-generated world save)</span></summary>
+        <p id="world-status" class="hint"></p>
+        <button type="button" id="btn-open-world-folder">Open world folder</button>
+      </details>
+
+      <details class="subsection">
+        <summary>Config files <span class="hint">(optional)</span></summary>
+        <button type="button" id="btn-open-config-folder">Open config folder</button>
+      </details>
+
+      <details class="subsection">
+        <summary>Whitelist / Ops / Server icon <span class="hint">(optional)</span></summary>
+        <div class="special-file-row" data-name="whitelist.json">
+          <span class="special-file-name">whitelist.json</span>
+          <span class="special-file-status"></span>
+          <button type="button" class="browse-special">Choose file…</button>
+          <button type="button" class="remove-special">Remove</button>
+        </div>
+        <div class="special-file-row" data-name="ops.json">
+          <span class="special-file-name">ops.json</span>
+          <span class="special-file-status"></span>
+          <button type="button" class="browse-special">Choose file…</button>
+          <button type="button" class="remove-special">Remove</button>
+        </div>
+        <div class="special-file-row" data-name="server-icon.png">
+          <span class="special-file-name">server-icon.png</span>
+          <span class="special-file-status"></span>
+          <button type="button" class="browse-special">Choose file…</button>
+          <button type="button" class="remove-special">Remove</button>
+        </div>
+      </details>
+
+      <div class="nav">
+        <button type="button" id="btn-2-back">Back</button>
+        <span class="spacer"></span>
+        <button type="button" class="primary" id="btn-2-next">Next: Export</button>
+      </div>
+    </section>
+
+    <!-- ============ Screen 3: Export ============ -->
+    <section class="screen" id="screen-3" hidden>
+      <h2>Review &amp; Export</h2>
+      <dl class="summary" id="summary"></dl>
+
+      <div class="cost-box" id="cost-box"></div>
+
+      <p id="export-error" class="error-box" hidden></p>
+
+      <div class="nav">
+        <button type="button" id="btn-3-back">Back</button>
+        <span class="spacer"></span>
+        <button type="button" class="primary" id="btn-export">Build zip for CloudShell</button>
+      </div>
+
+      <div id="export-result" class="export-result" hidden>
+        <p id="export-summary" class="hint"></p>
+        <button type="button" id="btn-open-build-folder">Open build folder</button>
+
+        <h3>Deploy it from AWS CloudShell</h3>
+        <ol class="instructions" id="instructions"></ol>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
